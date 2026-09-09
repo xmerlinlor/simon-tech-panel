@@ -2,7 +2,18 @@ import "dotenv/config";
 import express from "express";
 import { Telegraf } from "telegraf";
 
+import { startCommand } from "./bot/start.js";
+import { registerCreate } from "./bot/create.js";
+import { registerPanel } from "./bot/panel.js";
+import { registerReferral } from "./bot/referral.js";
+import { registerTasks } from "./bot/tasks.js";
+import { registerPlans } from "./bot/plans.js";
+import { registerHelp } from "./bot/help.js";
+import { registerVip } from "./bot/vip.js";
+import { registerOwner } from "./bot/owner.js";
+
 const app = express();
+
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -14,7 +25,7 @@ if (!TOKEN) {
 const bot = new Telegraf(TOKEN);
 
 // ============================================
-// HOME / HEALTH CHECK
+// HEALTH CHECK
 // ============================================
 
 app.get("/", (req, res) => {
@@ -22,123 +33,45 @@ app.get("/", (req, res) => {
 });
 
 // ============================================
-// BASIC START COMMAND
+// START
 // ============================================
 
-bot.start(async (ctx) => {
-  await ctx.reply(
-    `╭━━━〔 ⚡ SIMON TECH FREE PANEL 〕━━━╮
-┃
-┃ 👋 Welcome to Simon Tech Free Panel
-┃
-┃ 🚀 Create and manage your free
-┃    test hosting panels directly
-┃    through Telegram.
-┃
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯`,
-    {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "🚀 CREATE", callback_data: "create_panel" },
-            { text: "📦 MY PANEL", callback_data: "my_panel" }
-          ],
-          [
-            { text: "👥 REFERRAL", callback_data: "referral" },
-            { text: "📋 PLANS", callback_data: "plans" }
-          ],
-          [
-            { text: "🎁 DAILY TASKS", callback_data: "daily_tasks" },
-            { text: "💎 VIP", callback_data: "vip" }
-          ],
-          [
-            { text: "❓ HELP", callback_data: "help" },
-            { text: "👑 OWNER", callback_data: "owner" }
-          ],
-          [
-            { text: "📊 DASHBOARD", callback_data: "dashboard" }
-          ]
-        ]
-      }
-    }
-  );
-});
+bot.start(startCommand);
 
 // ============================================
-// BUTTON TEST
+// REGISTER SYSTEMS
 // ============================================
 
-bot.action("help", async (ctx) => {
-  await ctx.answerCbQuery();
-
-  await ctx.reply(
-    `╭━━━〔 ❓ HELP 〕━━━╮
-┃
-┃ 🚀 CREATE
-┃ Create a new test hosting panel.
-┃
-┃ 📦 MY PANEL
-┃ View your created panels.
-┃
-┃ 👥 REFERRAL
-┃ Invite users and earn points.
-┃
-┃ 🎁 DAILY TASKS
-┃ Complete tasks and earn points.
-┃
-┃ 💎 VIP
-┃ View VIP features.
-┃
-┃ 📋 PLANS
-┃ View available hosting plans.
-┃
-╰━━━━━━━━━━━━━━━━━━╯`
-  );
-});
-
-// ============================================
-// OTHER BUTTONS — TEMPORARY
-// ============================================
-
-bot.action(
-  [
-    "create_panel",
-    "my_panel",
-    "referral",
-    "plans",
-    "daily_tasks",
-    "vip",
-    "owner",
-    "dashboard"
-  ],
-  async (ctx) => {
-    await ctx.answerCbQuery();
-    await ctx.reply(
-      "⚙️ This section is being connected. The full Simon Tech system will be added next."
-    );
-  }
-);
+registerCreate(bot);
+registerPanel(bot);
+registerReferral(bot);
+registerTasks(bot);
+registerPlans(bot);
+registerHelp(bot);
+registerVip(bot);
+registerOwner(bot);
 
 // ============================================
 // ERROR HANDLER
 // ============================================
 
-bot.catch((err) => {
-  console.error("❌ Telegram bot error:", err);
+bot.catch((error) => {
+  console.error("❌ Telegram error:", error);
 });
 
 // ============================================
-// START SERVER + BOT
+// START SERVER
 // ============================================
 
 app.listen(PORT, "0.0.0.0", async () => {
-  console.log(`🌐 Simon Tech Panel running on port ${PORT}`);
+  console.log(`🌐 Server running on port ${PORT}`);
 
   try {
     await bot.launch();
-    console.log("🤖 Telegram bot is ONLINE");
+
+    console.log("🤖 Simon Tech Free Panel is ONLINE");
   } catch (error) {
-    console.error("❌ Failed to start Telegram bot:", error);
+    console.error("❌ Bot failed to start:", error);
   }
 });
 
