@@ -3,7 +3,6 @@ import {
   createUser,
   updateUser,
   savePanel,
-  getUserPanels,
   getPoints,
   removePoints
 } from "../utils/database.js";
@@ -15,9 +14,25 @@ const sessions = new Map();
 
 const PANEL_COST = 200;
 
+// ============================================
+// OWNER
+// ============================================
+
+function isOwner(userId) {
+  return String(userId) === String(process.env.OWNER_ID || "");
+}
+
+// ============================================
+// PASSWORD GENERATOR
+// ============================================
+
 function generatePassword() {
   return crypto.randomBytes(6).toString("base64url");
 }
+
+// ============================================
+// CREATE SYSTEM
+// ============================================
 
 export function registerCreate(bot) {
 
@@ -28,7 +43,8 @@ export function registerCreate(bot) {
   bot.action("create_panel", async (ctx) => {
     await ctx.answerCbQuery();
 
-    const userId = ctx.from.id;
+    const userId = String(ctx.from.id);
+    const owner = isOwner(userId);
 
     createUser(userId, {
       firstName: ctx.from.first_name || "",
@@ -38,19 +54,29 @@ export function registerCreate(bot) {
 
     const points = getPoints(userId);
 
-    if (points < PANEL_COST) {
+    // ==========================================
+    // USER POINT CHECK
+    // OWNER BYPASSES THIS
+    // ==========================================
+
+    if (!owner && points < PANEL_COST) {
       return ctx.reply(
 `╭━━━〔 🚫 INSUFFICIENT POINTS 〕━━━╮
 ┃
-┃ 💰 Your Points: ${points}
+┃ 💰 Your Points:
+┃ ${points}
 ┃
-┃ 🚀 Panel Cost: ${PANEL_COST} points
+┃ 🚀 Panel Cost:
+┃ ${PANEL_COST} points
 ┃
-┃ ❌ You need ${PANEL_COST - points}
-┃    more points.
+┃ ❌ You need:
+┃ ${PANEL_COST - points} more points.
 ┃
 ┃ 👥 Refer friends to earn
 ┃ +50 points for each referral.
+┃
+┃ 🎁 Daily task:
+┃ +25 points
 ┃
 ╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯`,
         mainMenu()
@@ -59,13 +85,18 @@ export function registerCreate(bot) {
 
     sessions.set(userId, {
       step: "email",
+      owner,
       data: {}
     });
 
     await ctx.reply(
 `╭━━━〔 📧 CREATE NEW PANEL 〕━━━╮
 ┃
-┃ 💰 Cost: ${PANEL_COST} points
+┃ ${
+  owner
+    ? "👑 OWNER ACCESS: FREE"
+    : `💰 Cost: ${PANEL_COST} points`
+}
 ┃
 ┃ Send your email address.
 ┃
@@ -85,7 +116,7 @@ export function registerCreate(bot) {
     async (ctx) => {
       await ctx.answerCbQuery();
 
-      const userId = ctx.from.id;
+      const userId = String(ctx.from.id);
       const session = sessions.get(userId);
 
       if (!session || !session.data.username) {
@@ -110,7 +141,11 @@ export function registerCreate(bot) {
 ┃ ${session.data.type}
 ┃
 ┃ 💰 Cost:
-┃ ${PANEL_COST} points
+┃ ${
+  session.owner
+    ? "FREE — OWNER"
+    : `${PANEL_COST} points`
+}
 ┃
 ┃ Now select your data plan.
 ┃
@@ -138,7 +173,7 @@ export function registerCreate(bot) {
     async (ctx) => {
       await ctx.answerCbQuery();
 
-      const userId = ctx.from.id;
+      const userId = String(ctx.from.id);
       const session = sessions.get(userId);
 
       if (!session || session.step !== "plan") {
@@ -148,26 +183,38 @@ export function registerCreate(bot) {
         );
       }
 
-      // Check points again before final creation
+      const owner = isOwner(userId);
+
+      // ========================================
+      // FINAL POINT CHECK
+      // OWNER BYPASSES
+      // ========================================
+
       const currentPoints = getPoints(userId);
 
-      if (currentPoints < PANEL_COST) {
+      if (!owner && currentPoints < PANEL_COST) {
         sessions.delete(userId);
 
         return ctx.reply(
 `╭━━━〔 🚫 NOT ENOUGH POINTS 〕━━━╮
 ┃
-┃ 💰 Your Points: ${currentPoints}
+┃ 💰 Your Points:
+┃ ${currentPoints}
 ┃
-┃ 🚀 Required: ${PANEL_COST}
+┃ 🚀 Required:
+┃ ${PANEL_COST}
 ┃
-┃ ❌ You need ${PANEL_COST - currentPoints}
-┃    more points.
+┃ ❌ You need:
+┃ ${PANEL_COST - currentPoints} more points.
 ┃
 ╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯`,
           mainMenu()
         );
       }
+
+      // ========================================
+      // PLANS
+      // ========================================
 
       const plans = {
         plan_2gb: "2GB",
@@ -182,11 +229,53 @@ export function registerCreate(bot) {
 
       session.data.plan = plan;
 
+      // ========================================
+      // PANEL ID
+      // ========================================
+
       const panelId =
         "ST-" +
         Date.now().toString(36).toUpperCase() +
         "-" +
         Math.floor(Math.random() * 999);
+
+      // ========================================
+      // PAYMENT
+      // ========================================
+      // OWNER = FREE
+      // USER = 200 POINTS
+      //
+      // Deduct first so we don't create a panel
+      // without successful payment.
+      // ========================================
+
+      let paymentSuccessful = true;
+
+      if (!owner) {
+        paymentSuccessful = removePoints(
+          userId,
+          PANEL_COST
+        );
+      }
+
+      if (!paymentSuccessful) {
+        sessions.delete(userId);
+
+        return ctx.reply(
+`╭━━━〔 ❌ PAYMENT FAILED 〕━━━╮
+┃
+┃ Your panel was not created.
+┃
+┃ 💰 Current Points:
+┃ ${getPoints(userId)}
+┃
+┃ No panel was created.
+┃ No points were deducted.
+┃
+╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯`,
+          mainMenu()
+        );
+      }
 
       // ========================================
       // CREATE PANEL
@@ -201,28 +290,40 @@ export function registerCreate(bot) {
         type: session.data.type,
         plan,
         status: "active",
-        simulator: true
+        simulator: true,
+        owner: owner
       });
 
+      // ========================================
+      // PANEL CREATION FAILED
+      // ========================================
+
       if (!panel) {
+
+        // Refund normal user
+        if (!owner) {
+          const refundedPoints =
+            getPoints(userId) + PANEL_COST;
+
+          updateUser(userId, {
+            points: refundedPoints
+          });
+        }
+
+        sessions.delete(userId);
+
         return ctx.reply(
-          "❌ Panel creation failed. No points were deducted.",
-          mainMenu()
-        );
-      }
-
-      // ========================================
-      // DEDUCT 200 POINTS
-      // ========================================
-
-      const paymentSuccessful = removePoints(
-        userId,
-        PANEL_COST
-      );
-
-      if (!paymentSuccessful) {
-        return ctx.reply(
-          "❌ Payment verification failed. Please try again.",
+`╭━━━〔 ❌ PANEL CREATION FAILED 〕━━━╮
+┃
+┃ The panel could not be created.
+┃
+┃ ${
+  owner
+    ? "👑 Owner access was free."
+    : "💰 Your 200 points were refunded."
+}
+┃
+╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯`,
           mainMenu()
         );
       }
@@ -234,12 +335,71 @@ export function registerCreate(bot) {
       const user = createUser(userId);
 
       updateUser(userId, {
-        panels: [...(user.panels || []), panelId]
+        panels: [
+          ...(user.panels || []),
+          panelId
+        ]
       });
+
+      // ========================================
+      // REMAINING POINTS
+      // ========================================
 
       const remainingPoints = getPoints(userId);
 
       sessions.delete(userId);
+
+      // ========================================
+      // OWNER RESPONSE
+      // ========================================
+
+      if (owner) {
+        return ctx.reply(
+`╭━━━〔 👑 OWNER PANEL CREATED 〕━━━╮
+┃
+┃ 🆔 Panel ID:
+┃ ${panelId}
+┃
+┃ 👤 Username:
+┃ ${panel.username}
+┃
+┃ 📧 Email:
+┃ ${panel.email}
+┃
+┃ 🔑 Password:
+┃ ${panel.password}
+┃
+┃ 🖥️ Type:
+┃ ${panel.type}
+┃
+┃ 💾 Plan:
+┃ ${panel.plan}
+┃
+┃ 💳 Cost:
+┃ FREE
+┃
+┃ 👑 Owner:
+┃ VERIFIED
+┃
+┃ 💰 Points:
+┃ ${remainingPoints}
+┃
+┃ 🟢 Status:
+┃ ACTIVE
+┃
+┃ ⚠️ TEST MODE
+┃ This is currently a simulator.
+┃ Real Pterodactyl provisioning will
+┃ be connected later.
+┃
+╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯`,
+          mainMenu()
+        );
+      }
+
+      // ========================================
+      // NORMAL USER RESPONSE
+      // ========================================
 
       await ctx.reply(
 `╭━━━〔 ✅ PANEL CREATED 〕━━━╮
@@ -287,7 +447,7 @@ export function registerCreate(bot) {
   // ============================================
 
   bot.on("text", async (ctx) => {
-    const userId = ctx.from.id;
+    const userId = String(ctx.from.id);
     const text = ctx.message.text.trim();
 
     if (text.startsWith("/")) return;
@@ -301,6 +461,7 @@ export function registerCreate(bot) {
     // ========================================
 
     if (session.step === "email") {
+
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) {
         return ctx.reply(
           "❌ Invalid email address.\n\nPlease send a valid email, for example:\nuser@example.com"
@@ -327,6 +488,7 @@ export function registerCreate(bot) {
     // ========================================
 
     if (session.step === "firstName") {
+
       session.data.firstName = text;
       session.step = "username";
 
@@ -348,6 +510,7 @@ export function registerCreate(bot) {
     // ========================================
 
     if (session.step === "username") {
+
       if (!/^[a-zA-Z0-9_.-]{3,32}$/.test(text)) {
         return ctx.reply(
           "❌ Invalid username.\n\nUse 3–32 characters containing letters, numbers, `_`, `-`, or `.`."
@@ -376,9 +539,14 @@ export function registerCreate(bot) {
     // ========================================
 
     if (session.step === "password") {
+
       if (text.toLowerCase() === "random") {
-        session.data.password = generatePassword();
+
+        session.data.password =
+          generatePassword();
+
       } else {
+
         if (text.length < 6) {
           return ctx.reply(
             "❌ Password must contain at least 6 characters."
@@ -393,12 +561,24 @@ export function registerCreate(bot) {
       return ctx.reply(
 `╭━━━〔 ✅ INFORMATION SAVED 〕━━━╮
 ┃
-┃ 📧 Email: ${session.data.email}
-┃ 👤 Name: ${session.data.firstName}
-┃ 🆔 Username: ${session.data.username}
-┃ 🔑 Password: ${session.data.password}
+┃ 📧 Email:
+┃ ${session.data.email}
 ┃
-┃ 💰 Panel Cost: ${PANEL_COST} points
+┃ 👤 Name:
+┃ ${session.data.firstName}
+┃
+┃ 🆔 Username:
+┃ ${session.data.username}
+┃
+┃ 🔑 Password:
+┃ ${session.data.password}
+┃
+┃ 💰 Panel Cost:
+┃ ${
+  session.owner
+    ? "FREE — OWNER"
+    : `${PANEL_COST} points`
+}
 ┃
 ┃ Select your panel type:
 ┃
