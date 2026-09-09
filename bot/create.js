@@ -1,26 +1,26 @@
 import { Markup } from "telegraf";
-import { createUser, updateUser, savePanel, getUserPanels } from "../utils/database.js";
+import {
+  createUser,
+  updateUser,
+  savePanel,
+  getUserPanels,
+  getPoints,
+  removePoints
+} from "../utils/database.js";
+
 import { panelTypes, dataPlans, mainMenu } from "./menu.js";
 import crypto from "crypto";
 
 const sessions = new Map();
 
-function getSession(userId) {
-  if (!sessions.has(userId)) {
-    sessions.set(userId, {
-      step: "email",
-      data: {}
-    });
-  }
-
-  return sessions.get(userId);
-}
+const PANEL_COST = 200;
 
 function generatePassword() {
   return crypto.randomBytes(6).toString("base64url");
 }
 
 export function registerCreate(bot) {
+
   // ============================================
   // CREATE BUTTON
   // ============================================
@@ -32,8 +32,30 @@ export function registerCreate(bot) {
 
     createUser(userId, {
       firstName: ctx.from.first_name || "",
+      lastName: ctx.from.last_name || "",
       username: ctx.from.username || ""
     });
+
+    const points = getPoints(userId);
+
+    if (points < PANEL_COST) {
+      return ctx.reply(
+`╭━━━〔 🚫 INSUFFICIENT POINTS 〕━━━╮
+┃
+┃ 💰 Your Points: ${points}
+┃
+┃ 🚀 Panel Cost: ${PANEL_COST} points
+┃
+┃ ❌ You need ${PANEL_COST - points}
+┃    more points.
+┃
+┃ 👥 Refer friends to earn
+┃ +50 points for each referral.
+┃
+╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯`,
+        mainMenu()
+      );
+    }
 
     sessions.set(userId, {
       step: "email",
@@ -42,6 +64,8 @@ export function registerCreate(bot) {
 
     await ctx.reply(
 `╭━━━〔 📧 CREATE NEW PANEL 〕━━━╮
+┃
+┃ 💰 Cost: ${PANEL_COST} points
 ┃
 ┃ Send your email address.
 ┃
@@ -65,7 +89,10 @@ export function registerCreate(bot) {
       const session = sessions.get(userId);
 
       if (!session || !session.data.username) {
-        return ctx.reply("❌ Your creation session expired. Tap 🚀 CREATE again.");
+        return ctx.reply(
+          "❌ Your creation session expired. Tap 🚀 CREATE again.",
+          mainMenu()
+        );
       }
 
       const typeMap = {
@@ -81,6 +108,9 @@ export function registerCreate(bot) {
 ┃
 ┃ ✅ Selected:
 ┃ ${session.data.type}
+┃
+┃ 💰 Cost:
+┃ ${PANEL_COST} points
 ┃
 ┃ Now select your data plan.
 ┃
@@ -112,7 +142,31 @@ export function registerCreate(bot) {
       const session = sessions.get(userId);
 
       if (!session || session.step !== "plan") {
-        return ctx.reply("❌ Your creation session expired. Tap 🚀 CREATE again.");
+        return ctx.reply(
+          "❌ Your creation session expired. Tap 🚀 CREATE again.",
+          mainMenu()
+        );
+      }
+
+      // Check points again before final creation
+      const currentPoints = getPoints(userId);
+
+      if (currentPoints < PANEL_COST) {
+        sessions.delete(userId);
+
+        return ctx.reply(
+`╭━━━〔 🚫 NOT ENOUGH POINTS 〕━━━╮
+┃
+┃ 💰 Your Points: ${currentPoints}
+┃
+┃ 🚀 Required: ${PANEL_COST}
+┃
+┃ ❌ You need ${PANEL_COST - currentPoints}
+┃    more points.
+┃
+╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯`,
+          mainMenu()
+        );
       }
 
       const plans = {
@@ -134,6 +188,10 @@ export function registerCreate(bot) {
         "-" +
         Math.floor(Math.random() * 999);
 
+      // ========================================
+      // CREATE PANEL
+      // ========================================
+
       const panel = savePanel(panelId, {
         userId,
         email: session.data.email,
@@ -146,11 +204,40 @@ export function registerCreate(bot) {
         simulator: true
       });
 
+      if (!panel) {
+        return ctx.reply(
+          "❌ Panel creation failed. No points were deducted.",
+          mainMenu()
+        );
+      }
+
+      // ========================================
+      // DEDUCT 200 POINTS
+      // ========================================
+
+      const paymentSuccessful = removePoints(
+        userId,
+        PANEL_COST
+      );
+
+      if (!paymentSuccessful) {
+        return ctx.reply(
+          "❌ Payment verification failed. Please try again.",
+          mainMenu()
+        );
+      }
+
+      // ========================================
+      // SAVE PANEL TO USER
+      // ========================================
+
       const user = createUser(userId);
 
       updateUser(userId, {
         panels: [...(user.panels || []), panelId]
       });
+
+      const remainingPoints = getPoints(userId);
 
       sessions.delete(userId);
 
@@ -175,6 +262,12 @@ export function registerCreate(bot) {
 ┃ 💾 Plan:
 ┃ ${panel.plan}
 ┃
+┃ 💳 Cost:
+┃ ${PANEL_COST} points
+┃
+┃ 💰 Remaining:
+┃ ${remainingPoints} points
+┃
 ┃ 🟢 Status:
 ┃ ACTIVE
 ┃
@@ -190,14 +283,13 @@ export function registerCreate(bot) {
   );
 
   // ============================================
-  // TEXT INPUT HANDLER
+  // TEXT INPUT
   // ============================================
 
   bot.on("text", async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text.trim();
 
-    // Ignore normal bot commands
     if (text.startsWith("/")) return;
 
     const session = sessions.get(userId);
@@ -224,7 +316,7 @@ export function registerCreate(bot) {
 ┃ Send your first name.
 ┃
 ┃ Example:
-┃ Simon
+┃ Simontech
 ┃
 ╰━━━━━━━━━━━━━━━━━━━━━━━╯`
       );
@@ -305,6 +397,8 @@ export function registerCreate(bot) {
 ┃ 👤 Name: ${session.data.firstName}
 ┃ 🆔 Username: ${session.data.username}
 ┃ 🔑 Password: ${session.data.password}
+┃
+┃ 💰 Panel Cost: ${PANEL_COST} points
 ┃
 ┃ Select your panel type:
 ┃
