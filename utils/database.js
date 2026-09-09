@@ -18,12 +18,14 @@ const defaultData = {
   }
 };
 
-// Create database folder if it doesn't exist
+// ============================================
+// DATABASE SETUP
+// ============================================
+
 if (!fs.existsSync(databaseDir)) {
   fs.mkdirSync(databaseDir, { recursive: true });
 }
 
-// Create database file if it doesn't exist
 if (!fs.existsSync(databaseFile)) {
   fs.writeFileSync(
     databaseFile,
@@ -31,18 +33,30 @@ if (!fs.existsSync(databaseFile)) {
   );
 }
 
-// Read database
+// ============================================
+// READ DATABASE
+// ============================================
+
 export function readDB() {
   try {
     const data = fs.readFileSync(databaseFile, "utf8");
     return JSON.parse(data);
   } catch (error) {
     console.error("❌ Database read error:", error);
-    return { ...defaultData };
+
+    fs.writeFileSync(
+      databaseFile,
+      JSON.stringify(defaultData, null, 2)
+    );
+
+    return JSON.parse(JSON.stringify(defaultData));
   }
 }
 
-// Save database
+// ============================================
+// SAVE DATABASE
+// ============================================
+
 export function saveDB(data) {
   try {
     fs.writeFileSync(
@@ -57,73 +71,182 @@ export function saveDB(data) {
   }
 }
 
-// Get user
+// ============================================
+// USER
+// ============================================
+
 export function getUser(userId) {
   const db = readDB();
 
-  return db.users[userId] || null;
+  return db.users[String(userId)] || null;
 }
 
-// Create user
 export function createUser(userId, data = {}) {
   const db = readDB();
+  const id = String(userId);
 
-  if (!db.users[userId]) {
-    db.users[userId] = {
-      id: userId,
+  if (!db.users[id]) {
+    db.users[id] = {
+      id,
+      firstName: data.firstName || "",
+      lastName: data.lastName || "",
+      username: data.username || "",
+
+      // POINT SYSTEM
       points: 0,
-      panels: [],
-      referralCode: `SIMON-${userId}`,
+
+      // REFERRAL
+      referralCode: `SIMON-${id}`,
       referredBy: null,
-      createdAt: new Date().toISOString(),
-      ...data
+      referralCount: 0,
+
+      // PANELS
+      panels: [],
+
+      createdAt: new Date().toISOString()
     };
 
     saveDB(db);
   }
 
-  return db.users[userId];
+  return db.users[id];
 }
 
-// Update user
 export function updateUser(userId, updates = {}) {
   const db = readDB();
+  const id = String(userId);
 
-  if (!db.users[userId]) {
-    createUser(userId);
+  if (!db.users[id]) {
+    db.users[id] = {
+      id,
+      points: 0,
+      panels: [],
+      referralCode: `SIMON-${id}`,
+      referralCount: 0,
+      referredBy: null,
+      createdAt: new Date().toISOString()
+    };
   }
 
-  const latestDB = readDB();
-
-  latestDB.users[userId] = {
-    ...latestDB.users[userId],
+  db.users[id] = {
+    ...db.users[id],
     ...updates
   };
 
-  saveDB(latestDB);
+  saveDB(db);
 
-  return latestDB.users[userId];
+  return db.users[id];
 }
 
-// Add points
+// ============================================
+// POINT SYSTEM
+// ============================================
+
+export function getPoints(userId) {
+  const user = getUser(userId);
+
+  return user?.points || 0;
+}
+
 export function addPoints(userId, amount) {
   const db = readDB();
+  const id = String(userId);
 
-  if (!db.users[userId]) {
+  if (!db.users[id]) {
     createUser(userId);
   }
 
   const latestDB = readDB();
 
-  latestDB.users[userId].points =
-    (latestDB.users[userId].points || 0) + amount;
+  latestDB.users[id].points =
+    (latestDB.users[id].points || 0) + Number(amount);
 
   saveDB(latestDB);
 
-  return latestDB.users[userId].points;
+  return latestDB.users[id].points;
 }
 
-// Create panel record
+export function removePoints(userId, amount) {
+  const db = readDB();
+  const id = String(userId);
+
+  if (!db.users[id]) {
+    return false;
+  }
+
+  const points = db.users[id].points || 0;
+  const cost = Number(amount);
+
+  if (points < cost) {
+    return false;
+  }
+
+  db.users[id].points = points - cost;
+
+  saveDB(db);
+
+  return true;
+}
+
+export function hasEnoughPoints(userId, amount) {
+  return getPoints(userId) >= Number(amount);
+}
+
+// ============================================
+// REFERRAL
+// ============================================
+
+export function rewardReferral(referrerId, referredUserId) {
+  const db = readDB();
+
+  const referrer = String(referrerId);
+  const referred = String(referredUserId);
+
+  if (!db.users[referrer]) {
+    return false;
+  }
+
+  if (!db.users[referred]) {
+    return false;
+  }
+
+  // Prevent self-referral
+  if (referrer === referred) {
+    return false;
+  }
+
+  // Prevent rewarding the same user twice
+  if (db.users[referred].referredBy) {
+    return false;
+  }
+
+  db.users[referred].referredBy = referrer;
+
+  db.users[referrer].points =
+    (db.users[referrer].points || 0) + 50;
+
+  db.users[referrer].referralCount =
+    (db.users[referrer].referralCount || 0) + 1;
+
+  if (!db.referrals[referrer]) {
+    db.referrals[referrer] = [];
+  }
+
+  db.referrals[referrer].push({
+    userId: referred,
+    reward: 50,
+    createdAt: new Date().toISOString()
+  });
+
+  saveDB(db);
+
+  return true;
+}
+
+// ============================================
+// PANELS
+// ============================================
+
 export function savePanel(panelId, panelData) {
   const db = readDB();
 
@@ -138,11 +261,11 @@ export function savePanel(panelId, panelData) {
   return db.panels[panelId];
 }
 
-// Get user panels
 export function getUserPanels(userId) {
   const db = readDB();
+  const id = String(userId);
 
   return Object.values(db.panels).filter(
-    (panel) => String(panel.userId) === String(userId)
+    (panel) => String(panel.userId) === id
   );
 }
